@@ -1,0 +1,8 @@
+deps.zig
+zigmod.lock
+.zigmod/
+zig-cache/
+zig-out/
+core.*
+src/mach-glfw
+src/zgl

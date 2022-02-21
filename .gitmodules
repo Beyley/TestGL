@@ -1,0 +1,6 @@
+[submodule "src/zgl"]
+	path = src/zgl
+	url = https://github.com/ziglibs/zgl
+[submodule "src/mach-glfw"]
+	path = src/mach-glfw
+	url = https://github.com/hexops/mach-glfw
