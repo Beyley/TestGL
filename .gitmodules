@@ -1,6 +1,12 @@
 [submodule "src/zgl"]
 	path = src/zgl
-	url = https://github.com/ziglibs/zgl
+	url = https://github.com/Beyley/zgl
 [submodule "src/mach-glfw"]
 	path = src/mach-glfw
 	url = https://github.com/hexops/mach-glfw
+[submodule "src/zig-qoi"]
+	path = src/zig-qoi
+	url = https://github.com/MasterQ32/zig-qoi
+[submodule "src/zig-gamedev"]
+	path = src/zig-gamedev
+	url = https://github.com/michal-z/zig-gamedev/
