@@ -204,7 +204,7 @@ pub fn initialize() anyerror!void {
     offset += @sizeOf(Vector2);
     zgl.vertexAttribPointer(7, 1, zgl.Type.float, false, @sizeOf(Instance), offset);
     offset += @sizeOf(f32);
-    zgl.vertexAttribPointer(8, 1, zgl.Type.int, false, @sizeOf(Instance), offset);
+    zgl.vertexAttribIPointer(8, 1, zgl.Type.int, @sizeOf(Instance), offset);
     // offset += @sizeOf(i32);
     // std.log.info("{d}:{d}", .{offset, @sizeOf(Instance)});
 
