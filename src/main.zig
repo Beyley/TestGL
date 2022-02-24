@@ -47,14 +47,14 @@ pub fn main() anyerror!void {
         engine.onUpdate(time_diff) catch |err| {
             std.log.err("Got error {any} in update!", .{err});
             //this destroy causes a segfault >:(
-            engine.window.destroy();
+            // engine.window.destroy();
             break;
         };
 
         engine.onDraw(time_diff) catch |err| {
             std.log.err("Got error {any} in draw!", .{err});
             //this destroy causes a segfault >:(
-            engine.window.destroy();
+            // engine.window.destroy();
             break;
         };
 

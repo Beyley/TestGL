@@ -3,8 +3,8 @@ const zgl = @import("zgl/zgl.zig");
 const zmath = @import("zig-gamedev/libs/zmath/zmath.zig");
 
 const engine = @import("engine.zig");
-
 const texture = @import("texture.zig");
+const renderer = @import("renderer.zig");
 
 const main = @import("main.zig");
 
@@ -81,7 +81,7 @@ const Color = engine.Color;
 
 const Texture2D = texture.Texture2D;
 
-pub var initialized: bool = false;
+const Renderer = renderer.Renderer;
 
 const Vertex = packed struct { pos: Vector2, tex_pos: Vector2 };
 // zig fmt: off
@@ -123,265 +123,292 @@ const indicies = [_]u16{
     2, 3, 0,
 };
 
-var vertexShader: zgl.Shader = undefined;
-var fragmentShader: zgl.Shader = undefined;
+pub const GLESRenderer = struct { 
+    vertexShader: zgl.Shader = undefined,
+    fragmentShader: zgl.Shader = undefined,
 
-var vao: zgl.VertexArray = undefined;
-var vbo: zgl.Buffer = undefined;
-var instance_vbo: zgl.Buffer = undefined;
+    vao: zgl.VertexArray = undefined,
+    vbo: zgl.Buffer = undefined,
+    instance_vbo: zgl.Buffer = undefined,
 
-var program: zgl.Program = undefined;
+    program: zgl.Program = undefined,
 
-var used_textures: usize = 0;
-var instances: usize = 0;
+    used_textures: usize = 0,
+    instances: usize = 0,
 
-var instance_data: []align(1) Instance = undefined;
-var texture_array: []Texture2D = undefined;
+    instance_data: []align(1) Instance = undefined,
+    texture_array: []Texture2D = undefined,
 
-pub fn initialize() anyerror!void {
-    vertexShader = zgl.createShader(zgl.ShaderType.vertex);
-    zgl.shaderSource(vertexShader, 1, &vertexShaderSource);
-    zgl.compileShader(vertexShader);
+    interface: Renderer,
 
-    //Get the vertex shader compile log
-    var shaderCompileLog = try zgl.getShaderInfoLog(vertexShader, main.allocator);
-    if (shaderCompileLog.len > 0)
-        std.log.err("Vertex shader compile log: {s}", .{shaderCompileLog});
-    main.allocator.free(shaderCompileLog);
+    pub fn Create() GLESRenderer {
+        return .{
+            .interface = Renderer{
+                .initializeFn = initialize,
+                .deinitializeFn = deinitialize,
+                .beginFn = begin,
+                .endFn = end,
+                .drawTextureFn = drawTexture,
+                .updateProjectionMatrixFn = updateProjectionMatrix,
+            }
+        };
+    }
 
-    fragmentShader = zgl.createShader(zgl.ShaderType.fragment);
-    zgl.shaderSource(fragmentShader, 1, &fragmentShaderSource);
-    zgl.compileShader(fragmentShader);
+    fn initialize(iface: *Renderer) anyerror!void {
+        const self = @fieldParentPtr(GLESRenderer, "interface", iface);
 
-    //Get the fragment shader compile log
-    shaderCompileLog = try zgl.getShaderInfoLog(fragmentShader, main.allocator);
-    if (shaderCompileLog.len > 0)
-        std.log.err("Fragment shader compile log: {s}", .{shaderCompileLog});
-    main.allocator.free(shaderCompileLog);
+        self.vertexShader = zgl.createShader(zgl.ShaderType.vertex);
+        zgl.shaderSource(self.vertexShader, 1, &vertexShaderSource);
+        zgl.compileShader(self.vertexShader);
 
-    program = zgl.createProgram();
-    zgl.attachShader(program, vertexShader);
-    zgl.attachShader(program, fragmentShader);
-    zgl.linkProgram(program);
+        //Get the vertex shader compile log
+        var shaderCompileLog = try zgl.getShaderInfoLog(self.vertexShader, main.allocator);
+        if (shaderCompileLog.len > 0)
+            std.log.err("Vertex shader compile log: {s}", .{shaderCompileLog});
+        main.allocator.free(shaderCompileLog);
 
-    vao = zgl.genVertexArray();
+        self.fragmentShader = zgl.createShader(zgl.ShaderType.fragment);
+        zgl.shaderSource(self.fragmentShader, 1, &fragmentShaderSource);
+        zgl.compileShader(self.fragmentShader);
 
-    vbo = zgl.genBuffer();
-    instance_vbo = zgl.genBuffer();
+        //Get the fragment shader compile log
+        shaderCompileLog = try zgl.getShaderInfoLog(self.fragmentShader, main.allocator);
+        if (shaderCompileLog.len > 0)
+            std.log.err("Fragment shader compile log: {s}", .{shaderCompileLog});
+        main.allocator.free(shaderCompileLog);
 
-    //Bind the VAO
-    zgl.bindVertexArray(vao);
-    //Bind the VBO
-    zgl.bindBuffer(vbo, zgl.BufferTarget.array_buffer);
+        self.program = zgl.createProgram();
+        zgl.attachShader(self.program, self.vertexShader);
+        zgl.attachShader(self.program, self.fragmentShader);
+        zgl.linkProgram(self.program);
 
-    //Load the data into the buffer
-    zgl.bufferData(zgl.BufferTarget.array_buffer, Vertex, &vertices, zgl.BufferUsage.static_draw);
+        self.vao = zgl.genVertexArray();
 
-    //Use our program
-    zgl.useProgram(program);
+        self.vbo = zgl.genBuffer();
+        self.instance_vbo = zgl.genBuffer();
 
-    //Set the vertex attributes
-    zgl.vertexAttribPointer(0, 2, zgl.Type.float, false, @sizeOf(Vertex), 0);
-    zgl.vertexAttribPointer(1, 2, zgl.Type.float, false, @sizeOf(Vertex), @sizeOf(f32) * 2);
+        //Bind the VAO
+        zgl.bindVertexArray(self.vao);
+        //Bind the VBO
+        zgl.bindBuffer(self.vbo, zgl.BufferTarget.array_buffer);
 
-    //Enable the vertex attributes
-    zgl.enableVertexAttribArray(0);
-    zgl.enableVertexAttribArray(1);
+        //Load the data into the buffer
+        zgl.bufferData(zgl.BufferTarget.array_buffer, Vertex, &vertices, zgl.BufferUsage.static_draw);
 
-    //The instance vertex buffer
-    zgl.bindBuffer(instance_vbo, zgl.BufferTarget.array_buffer);
+        //Use our program
+        zgl.useProgram(self.program);
 
-    var offset: usize = 0;
-    zgl.vertexAttribPointer(2, 2, zgl.Type.float, false, @sizeOf(Instance), offset);
-    offset += @sizeOf(Vector2);
-    zgl.vertexAttribPointer(3, 2, zgl.Type.float, false, @sizeOf(Instance), offset);
-    offset += @sizeOf(Vector2);
-    zgl.vertexAttribPointer(4, 4, zgl.Type.float, false, @sizeOf(Instance), offset);
-    offset += @sizeOf(Color);
-    zgl.vertexAttribPointer(5, 2, zgl.Type.float, false, @sizeOf(Instance), offset);
-    offset += @sizeOf(Vector2);
-    zgl.vertexAttribPointer(6, 2, zgl.Type.float, false, @sizeOf(Instance), offset);
-    offset += @sizeOf(Vector2);
-    zgl.vertexAttribPointer(7, 1, zgl.Type.float, false, @sizeOf(Instance), offset);
-    offset += @sizeOf(f32);
-    zgl.vertexAttribIPointer(8, 1, zgl.Type.int, @sizeOf(Instance), offset);
-    // offset += @sizeOf(i32);
-    // std.log.info("{d}:{d}", .{offset, @sizeOf(Instance)});
+        //Set the vertex attributes
+        zgl.vertexAttribPointer(0, 2, zgl.Type.float, false, @sizeOf(Vertex), 0);
+        zgl.vertexAttribPointer(1, 2, zgl.Type.float, false, @sizeOf(Vertex), @sizeOf(f32) * 2);
 
-    zgl.enableVertexAttribArray(2);
-    zgl.vertexAttribDivisor(2, 1);
-    zgl.enableVertexAttribArray(3);
-    zgl.vertexAttribDivisor(3, 1);
-    zgl.enableVertexAttribArray(4);
-    zgl.vertexAttribDivisor(4, 1);
-    zgl.enableVertexAttribArray(5);
-    zgl.vertexAttribDivisor(5, 1);
-    zgl.enableVertexAttribArray(6);
-    zgl.vertexAttribDivisor(6, 1);
-    zgl.enableVertexAttribArray(7);
-    zgl.vertexAttribDivisor(7, 1);
-    zgl.enableVertexAttribArray(8);
-    zgl.vertexAttribDivisor(8, 1);
+        //Enable the vertex attributes
+        zgl.enableVertexAttribArray(0);
+        zgl.enableVertexAttribArray(1);
 
-    try updateProjectionMatrix();
+        //The instance vertex buffer
+        zgl.bindBuffer(self.instance_vbo, zgl.BufferTarget.array_buffer);
 
-    zgl.uniform1i(zgl.getUniformLocation(program, "tex_0"), 0);
-    zgl.uniform1i(zgl.getUniformLocation(program, "tex_1"), 1);
-    zgl.uniform1i(zgl.getUniformLocation(program, "tex_2"), 2);
-    zgl.uniform1i(zgl.getUniformLocation(program, "tex_3"), 3);
+        var offset: usize = 0;
+        zgl.vertexAttribPointer(2, 2, zgl.Type.float, false, @sizeOf(Instance), offset);
+        offset += @sizeOf(Vector2);
+        zgl.vertexAttribPointer(3, 2, zgl.Type.float, false, @sizeOf(Instance), offset);
+        offset += @sizeOf(Vector2);
+        zgl.vertexAttribPointer(4, 4, zgl.Type.float, false, @sizeOf(Instance), offset);
+        offset += @sizeOf(Color);
+        zgl.vertexAttribPointer(5, 2, zgl.Type.float, false, @sizeOf(Instance), offset);
+        offset += @sizeOf(Vector2);
+        zgl.vertexAttribPointer(6, 2, zgl.Type.float, false, @sizeOf(Instance), offset);
+        offset += @sizeOf(Vector2);
+        zgl.vertexAttribPointer(7, 1, zgl.Type.float, false, @sizeOf(Instance), offset);
+        offset += @sizeOf(f32);
+        zgl.vertexAttribIPointer(8, 1, zgl.Type.int, @sizeOf(Instance), offset);
+        // offset += @sizeOf(i32);
+        // std.log.info("{d}:{d}", .{offset, @sizeOf(Instance)});
 
-    //Allocate the array that will store our instance data
-    instance_data = try main.allocator.alloc(Instance, 256);
-    texture_array = try main.allocator.alloc(Texture2D, 4);
+        zgl.enableVertexAttribArray(2);
+        zgl.vertexAttribDivisor(2, 1);
+        zgl.enableVertexAttribArray(3);
+        zgl.vertexAttribDivisor(3, 1);
+        zgl.enableVertexAttribArray(4);
+        zgl.vertexAttribDivisor(4, 1);
+        zgl.enableVertexAttribArray(5);
+        zgl.vertexAttribDivisor(5, 1);
+        zgl.enableVertexAttribArray(6);
+        zgl.vertexAttribDivisor(6, 1);
+        zgl.enableVertexAttribArray(7);
+        zgl.vertexAttribDivisor(7, 1);
+        zgl.enableVertexAttribArray(8);
+        zgl.vertexAttribDivisor(8, 1);
 
-    initialized = true;
-}
+        try updateProjectionMatrix(iface);
 
-pub fn deinitialize() anyerror!void {
-    zgl.deleteShader(vertexShader);
-    zgl.deleteShader(fragmentShader);
-    zgl.deleteProgram(program);
+        zgl.uniform1i(zgl.getUniformLocation(self.program, "tex_0"), 0);
+        zgl.uniform1i(zgl.getUniformLocation(self.program, "tex_1"), 1);
+        zgl.uniform1i(zgl.getUniformLocation(self.program, "tex_2"), 2);
+        zgl.uniform1i(zgl.getUniformLocation(self.program, "tex_3"), 3);
 
-    zgl.deleteVertexArray(vao);
-    zgl.deleteBuffer(vbo);
-    zgl.deleteBuffer(instance_vbo);
+        //Allocate the array that will store our instance data
+        self.instance_data = try main.allocator.alloc(Instance, 256);
+        self.texture_array = try main.allocator.alloc(Texture2D, 4);
 
-    //Free our instance data
-    main.allocator.free(instance_data);
-    main.allocator.free(texture_array);
+        self.interface.initialized = true;
+    }
 
-    initialized = false;
-}
+    fn deinitialize(iface: *Renderer) anyerror!void {
+        const self = @fieldParentPtr(GLESRenderer, "interface", iface);
 
-pub var started: bool = false;
+        zgl.deleteShader(self.vertexShader);
+        zgl.deleteShader(self.fragmentShader);
+        zgl.deleteProgram(self.program);
 
-pub fn begin() anyerror!void {
-    if (started) return error{RendererAlreadyStarted}.RendererAlreadyStarted;
+        zgl.deleteVertexArray(self.vao);
+        zgl.deleteBuffer(self.vbo);
+        zgl.deleteBuffer(self.instance_vbo);
 
-    last_render_count = 0;
+        //Free our instance data
+        main.allocator.free(self.instance_data);
+        main.allocator.free(self.texture_array);
 
-    started = true;
-}
+        self.interface.initialized = false;
+    }
 
-pub fn end() anyerror!void {
-    if (!started) return error{RendererNotStarted}.RendererNotStarted;
+    pub fn begin(iface: *Renderer) anyerror!void {
+        const self = @fieldParentPtr(GLESRenderer, "interface", iface);
 
-    try flush();
+        if (self.interface.started) return error{RendererAlreadyStarted}.RendererAlreadyStarted;
 
-    started = false;
-}
+        self.interface.last_render_count = 0;
 
-pub fn drawTexture(pos: Vector2, size: Vector2, color: Color, tex: texture.Texture2D, tex_pos: Vector2, tex_size: Vector2, rot: f32) anyerror!void {
-    if (instances >= instance_data.len or used_textures >= texture_array.len) try flush();
+        self.interface.started = true;
+    }
 
-    instance_data[instances] = .{ .pos = pos, .size = size, .color = color, .tex_pos = tex_pos, .tex_size = tex_size, .tex_id = @intCast(i32, try getTextureId(tex)), .rotation = rot };
-    // std.log.info("Drawing texture with data {any}", .{instance_data[instances]});
+    pub fn end(iface: *Renderer) anyerror!void {
+        const self = @fieldParentPtr(GLESRenderer, "interface", iface);
+        
+        if (!self.interface.started) return error{RendererNotStarted}.RendererNotStarted;
 
-    instances += 1;
-}
+        try flush(iface);
 
-fn getTextureId(tex: Texture2D) anyerror!usize {
-    if (used_textures != 0) {
-        var i: usize = 0;
+        self.interface.started = false;
+    }
 
-        for (texture_array) |tex2| {
-            if (i == used_textures) break;
+    pub fn drawTexture(iface: *Renderer, pos: Vector2, size: Vector2, color: Color, tex: Texture2D, tex_pos: Vector2, tex_size: Vector2, rot: f32) anyerror!void {
+        const self = @fieldParentPtr(GLESRenderer, "interface", iface);
+        
+        if (self.instances >= self.instance_data.len or self.used_textures >= self.texture_array.len) try flush(iface);
 
-            if (tex.texture == tex2.texture) return i;
+        self.instance_data[self.instances] = .{ .pos = pos, .size = size, .color = color, .tex_pos = tex_pos, .tex_size = tex_size, .tex_id = @intCast(i32, try getTextureId(iface, tex)), .rotation = rot };
+
+        self.instances += 1;
+    }
+
+    fn getTextureId(iface: *Renderer, tex: Texture2D) anyerror!usize {
+        const self = @fieldParentPtr(GLESRenderer, "interface", iface);
+        
+        if (self.used_textures != 0) {
+            var i: usize = 0;
+
+            for (self.texture_array) |tex2| {
+                if (i == self.used_textures) break;
+
+                if (tex.texture == tex2.texture) return i;
+
+                i += 1;
+            }
+        }
+
+        self.texture_array[self.used_textures] = tex;
+        self.used_textures += 1;
+        return self.used_textures - 1;
+    }
+
+    fn flush(iface: *Renderer) anyerror!void {
+        const self = @fieldParentPtr(GLESRenderer, "interface", iface);
+        
+        if (self.instances == 0 or self.used_textures == 0) return;
+
+        zgl.useProgram(self.program);
+        zgl.bindVertexArray(self.vao);
+
+        var i: i32 = 0;
+        for (self.texture_array) |tex| {
+            //Make sure we only iterate the textures we used
+            if (i == self.used_textures) break;
+
+            //Set the active texture unit
+            switch (i) {
+                0 => {
+                    zgl.activeTexture(zgl.TextureUnit.texture_0);
+                },
+                1 => {
+                    zgl.activeTexture(zgl.TextureUnit.texture_1);
+                },
+                2 => {
+                    zgl.activeTexture(zgl.TextureUnit.texture_2);
+                },
+                3 => {
+                    zgl.activeTexture(zgl.TextureUnit.texture_3);
+                },
+                else => {
+                    return error{InvalidTextureUnit}.InvalidTextureUnit;
+                },
+            }
+
+            //Bind the texture to the texture unit
+            zgl.bindTexture(tex.texture, zgl.TextureTarget.@"2d");
 
             i += 1;
         }
+
+        zgl.bindBuffer(self.instance_vbo, zgl.BufferTarget.array_buffer);
+        zgl.bufferData(zgl.BufferTarget.array_buffer, Instance, self.instance_data, zgl.BufferUsage.static_draw);
+
+        zgl.drawArraysInstanced(zgl.PrimitiveType.triangle_strip, 0, 6, self.instances);
+
+        self.interface.last_render_count += self.instances;
+
+        self.used_textures = 0;
+        self.instances = 0;
     }
 
-    texture_array[used_textures] = tex;
-    used_textures += 1;
-    return used_textures - 1;
-}
-
-pub var last_render_count: u64 = 0;
-fn flush() anyerror!void {
-    if (instances == 0 or used_textures == 0) return;
-
-    zgl.useProgram(program);
-    zgl.bindVertexArray(vao);
-
-    var i: i32 = 0;
-    for (texture_array) |tex| {
-        //Make sure we only iterate the textures we used
-        if (i == used_textures) break;
-
-        //Set the active texture unit
-        switch (i) {
-            0 => {
-                zgl.activeTexture(zgl.TextureUnit.texture_0);
-            },
-            1 => {
-                zgl.activeTexture(zgl.TextureUnit.texture_1);
-            },
-            2 => {
-                zgl.activeTexture(zgl.TextureUnit.texture_2);
-            },
-            3 => {
-                zgl.activeTexture(zgl.TextureUnit.texture_3);
-            },
-            else => {
-                return error{InvalidTextureUnit}.InvalidTextureUnit;
-            },
-        }
+    pub fn updateProjectionMatrix(iface: *Renderer) anyerror!void {
+        const self = @fieldParentPtr(GLESRenderer, "interface", iface);
         
-        //Bind the texture to the texture unit
-        zgl.bindTexture(tex.texture, zgl.TextureTarget.@"2d");
+        var framebufferSize = try engine.window.getFramebufferSize();
 
-        i += 1;
+        var mat: zmath.Mat = zmath.orthographicLh(@intToFloat(f32, framebufferSize.width), @intToFloat(f32, framebufferSize.height), 0, 1);
+
+        var mat_row_1: @Vector(4, f32) = mat[0];
+        var mat_row_2: @Vector(4, f32) = mat[1];
+        var mat_row_3: @Vector(4, f32) = mat[2];
+        var mat_row_4: @Vector(4, f32) = mat[3];
+
+        const proj_matrix_raw = [4][4]f32{ [4]f32{
+            mat_row_1[0],
+            mat_row_1[1],
+            mat_row_1[2],
+            mat_row_1[3],
+        }, [4]f32{
+            mat_row_2[0],
+            mat_row_2[1],
+            mat_row_2[2],
+            mat_row_2[3],
+        }, [4]f32{
+            mat_row_3[0],
+            mat_row_3[1],
+            mat_row_3[2],
+            mat_row_3[3],
+        }, [4]f32{
+            mat_row_4[0],
+            mat_row_4[1],
+            mat_row_4[2],
+            mat_row_4[3],
+        } };
+
+        const proj_matrix = [_][4][4]f32{proj_matrix_raw};
+
+        var proj_matrix_pos: ?u32 = zgl.getUniformLocation(self.program, "ProjectionMatrix");
+        zgl.uniformMatrix4fv(proj_matrix_pos, false, &proj_matrix);
     }
-
-    // std.log.info("tex_amount: {d} texat0:{d} texat128:{d}", .{used_textures, instance_data[0].tex_id, instance_data[128].tex_id});
-
-    zgl.bindBuffer(instance_vbo, zgl.BufferTarget.array_buffer);
-    zgl.bufferData(zgl.BufferTarget.array_buffer, Instance, instance_data, zgl.BufferUsage.static_draw);
-
-    zgl.drawArraysInstanced(zgl.PrimitiveType.triangle_strip, 0, 6, instances);
-
-    last_render_count += instances;
-
-    used_textures = 0;
-    instances = 0;
-}
-
-pub fn updateProjectionMatrix() anyerror!void {
-    var framebufferSize = try engine.window.getFramebufferSize();
-
-    var mat: zmath.Mat = zmath.orthographicLh(@intToFloat(f32, framebufferSize.width), @intToFloat(f32, framebufferSize.height), 0, 1);
-
-    var mat_row_1: @Vector(4, f32) = mat[0];
-    var mat_row_2: @Vector(4, f32) = mat[1];
-    var mat_row_3: @Vector(4, f32) = mat[2];
-    var mat_row_4: @Vector(4, f32) = mat[3];
-
-    const proj_matrix_raw = [4][4]f32{ [4]f32{
-        mat_row_1[0],
-        mat_row_1[1],
-        mat_row_1[2],
-        mat_row_1[3],
-    }, [4]f32{
-        mat_row_2[0],
-        mat_row_2[1],
-        mat_row_2[2],
-        mat_row_2[3],
-    }, [4]f32{
-        mat_row_3[0],
-        mat_row_3[1],
-        mat_row_3[2],
-        mat_row_3[3],
-    }, [4]f32{
-        mat_row_4[0],
-        mat_row_4[1],
-        mat_row_4[2],
-        mat_row_4[3],
-    } };
-
-    const proj_matrix = [_][4][4]f32{proj_matrix_raw};
-
-    var proj_matrix_pos: ?u32 = zgl.getUniformLocation(program, "ProjectionMatrix");
-    zgl.uniformMatrix4fv(proj_matrix_pos, false, &proj_matrix);
-}
+};

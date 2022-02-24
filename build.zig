@@ -1,6 +1,8 @@
 const std = @import("std");
 const glfw = @import("src/mach-glfw/build.zig");
 
+const renderers = @import("src/renderer.zig");
+
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -12,22 +14,15 @@ pub fn build(b: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
+    var options = b.addOptions();
+    options.addOption(u8, "RENDER_BACKEND", @enumToInt(renderers.RendererType.GLES));
+
     const exe = b.addExecutable("TestGL", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.addLibraryPath("deps");
-
-    // const zgl: std.build.Pkg = .{
-    //     .name = "zgl",
-    //     .path = .{ .path = "deps/zgl/zgl.zig" },
-    //     // .dependencies: ?[]const Pkg = null,
-    // };  
-
-    // exe.addPackage(zgl);
-
     exe.linkSystemLibrary("epoxy");
-    
-    // exe.addPackagePath("glfw", "src/mach-glfw/src/main.zig");
+    exe.addOptions("TestGLOptions", options);
     glfw.link(b, exe, .{});
 
     exe.install();
